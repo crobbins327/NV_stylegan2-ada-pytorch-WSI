@@ -41,6 +41,7 @@ def setup_training_loop_kwargs(
     from_wsi = None,
     wsi_dir = None,
     coord_dir = None,
+    process_list = None,
     wsi_exten = None,
     max_coord_per_wsi = None,
     resolution = None,
@@ -123,7 +124,7 @@ def setup_training_loop_kwargs(
             max_coord_per_wsi = 'inf'
             
         args.training_set_kwargs = dnnlib.EasyDict(class_name='training.dataset.WSICoordDataset', 
-                                      wsi_dir=wsi_dir, coord_dir=coord_dir, wsi_exten=wsi_exten, max_coord_per_wsi=max_coord_per_wsi, resolution=resolution, 
+                                      wsi_dir=wsi_dir, coord_dir=coord_dir, process_list=process_list, wsi_exten=wsi_exten, max_coord_per_wsi=max_coord_per_wsi, resolution=resolution, 
                                       use_labels=False, max_size=None, xflip=False)
         args.data_loader_kwargs = dnnlib.EasyDict(pin_memory=True, num_workers=3, prefetch_factor=2)
     
@@ -440,6 +441,7 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--from_wsi', is_flag=True, default=False, help='Dataset from WSI? [default: false]')
 @click.option('--wsi_dir', help='WSI directory', metavar='DIR')
 @click.option('--coord_dir', help='h5 coordinate file directory', metavar='DIR')
+@click.option('--process_list', help='optional path to WSI process list csv', metavar='PATH')
 @click.option('--wsi_exten', help='WSI filename extension [default: .tif]', type=str)
 @click.option('--max_coord_per_wsi', help='Max patches from coordinate file per WSI', type=float)
 @click.option('--resolution', help='Patch resolution (depends on coord file for WSI) [default: 256]', type=int)

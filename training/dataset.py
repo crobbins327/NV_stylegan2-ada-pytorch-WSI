@@ -16,6 +16,7 @@ import dnnlib
 import openslide
 import h5py
 import random
+import pandas as pd
 
 try:
     import pyspng
@@ -243,6 +244,7 @@ class WSICoordDataset(Dataset):
     def __init__(self,
         wsi_dir,                   # Path to WSI directory.
         coord_dir,             # Path to h5 coord database.
+        process_list = None,  #Dataframe path of WSIs to process and their seg_levels/downsample levels that correspond to the coords
         wsi_exten = '.svs',
         max_coord_per_wsi = 'inf',
         resolution      = 256, # Ensure specific resolution.
@@ -252,6 +254,10 @@ class WSICoordDataset(Dataset):
         self.wsi_exten = wsi_exten
         self.coord_dir = coord_dir
         self.max_coord_per_wsi = max_coord_per_wsi
+        if process_list is None:
+            self.process_list = None
+        else:
+            self.process_list = pd.read_csv(process_list)
         
         #Implement labels here...
         self.coord_dict, self.wsi_names = self.createCoordDict(self.wsi_dir, self.wsi_exten, self.coord_dir, self.max_coord_per_wsi)
@@ -274,10 +280,14 @@ class WSICoordDataset(Dataset):
         super().__init__(name=name, raw_shape=raw_shape, **super_kwargs)
     
     @staticmethod
-    def createCoordDict(wsi_dir, wsi_exten, coord_dir, max_coord_per_wsi):
-        #Only use WSI that have coord files....
-        all_coord_files = sorted([x for x in os.listdir(coord_dir) if x.endswith('.h5')])
-        #Get WSI filenames from path that have coord files
+    def createCoordDict(wsi_dir, wsi_exten, coord_dir, max_coord_per_wsi, process_list):
+        if process_list is None:
+            #Only use WSI that have coord files....
+            all_coord_files = sorted([x for x in os.listdir(coord_dir) if x.endswith('.h5')])
+        else:
+            wsi_plist = list(process_list.loc[~process_list['exclude_ids'].isin(['y','yes','Y']),'slide_id'])
+            all_coord_files = sorted([x.split(wsi_exten)[0]+'.h5' for x in wsi_plist])
+        #Get WSI filenames from path that have coord files/in process list
         wsi_names = sorted([w for w in os.listdir(wsi_dir) if w.endswith(wsi_exten) and w.split(wsi_exten)[0]+'.h5' in all_coord_files])
                 
         #Get corresponding coord h5 files using WSI paths
@@ -310,14 +320,19 @@ class WSICoordDataset(Dataset):
     
     def _load_raw_image(self, raw_idx):
         coord, wsi_num = self.coord_dict[raw_idx % self.coord_size]
-        img_path = os.path.join(self.wsi_dir, self.wsi_names[wsi_num])
+        wsi_name = self.wsi_names[wsi_num]
+        img_path = os.path.join(self.wsi_dir)
         wsi = openslide.OpenSlide(img_path)
         #Check if WSI already open... does this really help performance?
         #Can't be pickled.... bad for multiprocessing in this case
         # if self.wsi_open is None or self.wsi_open != self.wsi_names[wsi_num]:
             # self.wsi = openslide.OpenSlide(img_path)
             # self.wsi_open = self.wsi_names[wsi_num]
-        img = np.array(wsi.read_region(coord, 0, (self.patch_size, self.patch_size)).convert('RGB'))
+        if self.process_list is not None:
+            seg_level = self.process_list.loc[self.process_list['slide_id']==wsi_name,'seg_level'].iloc[0]
+        else:
+            seg_level = 0
+        img = np.array(wsi.read_region(coord, seg_level, (self.patch_size, self.patch_size)).convert('RGB'))
         # img = img.transpose(2, 0, 1) # HWC => CHW
         img = np.moveaxis(img, 2, 0) # HWC => CHW
         return img
