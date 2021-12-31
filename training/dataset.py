@@ -248,6 +248,7 @@ class WSICoordDataset(Dataset):
         wsi_exten = '.svs',
         max_coord_per_wsi = 'inf',
         resolution      = 256, # Ensure specific resolution.
+        desc = None,
         **super_kwargs,         # Additional arguments for the Dataset base class.
     ):
         self.wsi_dir = wsi_dir
@@ -259,10 +260,13 @@ class WSICoordDataset(Dataset):
         else:
             self.process_list = pd.read_csv(process_list)
         
-        #Implement labels here...
-        self.coord_dict, self.wsi_names = self.createCoordDict(self.wsi_dir, self.wsi_exten, self.coord_dir, self.max_coord_per_wsi)
+        #Implement labels here..
+        self.coord_dict, self.wsi_names = self.createCoordDict(self.wsi_dir, self.wsi_exten, self.coord_dir, self.max_coord_per_wsi, self.process_list)
         
-        name = str(self.coord_dir)
+        if desc is None:
+            name = str(self.coord_dir)
+        else:
+            name = desc
         self.coord_size = len(self.coord_dict)  # get the size of coord dataset
         print('Number of WSIs:', len(self.wsi_names))
         print('Number of patches:', self.coord_size)
@@ -285,8 +289,10 @@ class WSICoordDataset(Dataset):
             #Only use WSI that have coord files....
             all_coord_files = sorted([x for x in os.listdir(coord_dir) if x.endswith('.h5')])
         else:
+            #Only use WSI that coord files aren't excluded and are in coord_dir
             wsi_plist = list(process_list.loc[~process_list['exclude_ids'].isin(['y','yes','Y']),'slide_id'])
-            all_coord_files = sorted([x.split(wsi_exten)[0]+'.h5' for x in wsi_plist])
+            coord_plist = sorted([x.split(wsi_exten)[0]+'.h5' for x in wsi_plist])
+            all_coord_files = sorted([x for x in os.listdir(coord_dir) if x.endswith('.h5') and x in coord_plist])
         #Get WSI filenames from path that have coord files/in process list
         wsi_names = sorted([w for w in os.listdir(wsi_dir) if w.endswith(wsi_exten) and w.split(wsi_exten)[0]+'.h5' in all_coord_files])
                 
@@ -321,7 +327,8 @@ class WSICoordDataset(Dataset):
     def _load_raw_image(self, raw_idx):
         coord, wsi_num = self.coord_dict[raw_idx % self.coord_size]
         wsi_name = self.wsi_names[wsi_num]
-        img_path = os.path.join(self.wsi_dir)
+        #print('opening {}'.format(wsi_name))
+        img_path = os.path.join(self.wsi_dir, wsi_name)
         wsi = openslide.OpenSlide(img_path)
         #Check if WSI already open... does this really help performance?
         #Can't be pickled.... bad for multiprocessing in this case
@@ -330,6 +337,8 @@ class WSICoordDataset(Dataset):
             # self.wsi_open = self.wsi_names[wsi_num]
         if self.process_list is not None:
             seg_level = self.process_list.loc[self.process_list['slide_id']==wsi_name,'seg_level'].iloc[0]
+            #if seg_level != 0:
+            #    print('{} for {}'.format(seg_level, wsi_name))
         else:
             seg_level = 0
         img = np.array(wsi.read_region(coord, seg_level, (self.patch_size, self.patch_size)).convert('RGB'))

@@ -125,7 +125,7 @@ def setup_training_loop_kwargs(
             
         args.training_set_kwargs = dnnlib.EasyDict(class_name='training.dataset.WSICoordDataset', 
                                       wsi_dir=wsi_dir, coord_dir=coord_dir, process_list=process_list, wsi_exten=wsi_exten, max_coord_per_wsi=max_coord_per_wsi, resolution=resolution, 
-                                      use_labels=False, max_size=None, xflip=False)
+                                      desc=desc, use_labels=False, max_size=None, xflip=False)
         args.data_loader_kwargs = dnnlib.EasyDict(pin_memory=True, num_workers=3, prefetch_factor=2)
     
     else:
