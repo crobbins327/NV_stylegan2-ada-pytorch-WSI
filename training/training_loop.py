@@ -115,6 +115,7 @@ def training_loop(
     image_snapshot_ticks    = 50,       # How often to save image snapshots? None = disable.
     network_snapshot_ticks  = 50,       # How often to save network snapshots? None = disable.
     resume_pkl              = None,     # Network pickle to resume training from.
+    kimg_start              = None,
     cudnn_benchmark         = True,     # Enable torch.backends.cudnn.benchmark?
     allow_tf32              = False,    # Enable torch.backends.cuda.matmul.allow_tf32 and torch.backends.cudnn.allow_tf32?
     abort_fn                = None,     # Callback function for determining whether to abort training. Must return consistent results across ranks.
@@ -251,8 +252,12 @@ def training_loop(
     if rank == 0:
         print(f'Training for {total_kimg} kimg...')
         print()
-    cur_nimg = 0
-    cur_tick = 0
+    if (resume_pkl is not None) and (kimg_start is not None): 
+        cur_nimg = int(kimg_start)*1000
+        cur_tick = int(kimg_start)//kimg_per_tick
+    else:
+        cur_nimg = 0
+        cur_tick = 0
     tick_start_nimg = cur_nimg
     tick_start_time = time.time()
     maintenance_time = tick_start_time - start_time

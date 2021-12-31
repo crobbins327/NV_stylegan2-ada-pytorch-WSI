@@ -65,6 +65,7 @@ def setup_training_loop_kwargs(
     # Transfer learning.
     resume     = None, # Load previous network: 'noresume' (default), 'ffhq256', 'ffhq512', 'ffhq1024', 'celebahq256', 'lsundog256', <file>, <url>
     freezed    = None, # Freeze-D: <int>, default = 0 discriminator layers
+    kimg_start = None,
 
     # Performance options (not included in desc).
     fp32       = None, # Disable mixed-precision training: <bool>, default = False
@@ -336,9 +337,11 @@ def setup_training_loop_kwargs(
     elif resume in resume_specs:
         desc += f'-resume{resume}'
         args.resume_pkl = resume_specs[resume] # predefined url
+        args.kimg_start = kimg_start
     else:
         desc += '-resumecustom'
         args.resume_pkl = resume # custom path or url
+        args.kimg_start = kimg_start
 
     if resume != 'noresume':
         args.ada_kimg = 100 # make ADA react faster at the beginning
@@ -464,6 +467,7 @@ class CommaSeparatedList(click.ParamType):
 
 # Transfer learning.
 @click.option('--resume', help='Resume training [default: noresume]', metavar='PKL')
+@click.option('--kimg_start', help='kimg start [default: 0]', type=int, metavar='INT')
 @click.option('--freezed', help='Freeze-D [default: 0 layers]', type=int, metavar='INT')
 
 # Performance options.
