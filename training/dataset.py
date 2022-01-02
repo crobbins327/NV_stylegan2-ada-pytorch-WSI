@@ -46,7 +46,7 @@ class Dataset(torch.utils.data.Dataset):
         if (max_size is not None) and (self._raw_idx.size > max_size):
             np.random.RandomState(random_seed).shuffle(self._raw_idx)
             self._raw_idx = np.sort(self._raw_idx[:max_size])
-
+            print("Using max images:", len(self._raw_idx))
         # Apply xflip.
         self._xflip = np.zeros(self._raw_idx.size, dtype=np.uint8)
         if xflip:
@@ -314,6 +314,11 @@ class WSICoordDataset(Dataset):
                     #Randomly select X coords
                     rand_ind = np.sort(random.sample(range(max_len), int(max_coord_per_wsi)))
                     coords = dset[rand_ind]
+            #Check that coordinates and patch resolution is within the dimensions of the WSI... slow but only done once at beginning
+            wsi
+            for coord in coords:
+
+
             #Store as dictionary with tuples {0: (coord, wsi_number), 1: (coord, wsi_number), etc.}
             dict_len = len(coord_dict)
             for i in range(coords.shape[0]):

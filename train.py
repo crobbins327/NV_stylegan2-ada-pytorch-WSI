@@ -52,6 +52,7 @@ def setup_training_loop_kwargs(
 
     # Base config.
     cfg        = None, # Base config: 'auto' (default), 'stylegan2', 'paper256', 'paper512', 'paper1024', 'cifar'
+    lr         = None,
     gamma      = None, # Override R1 gamma: <float>
     kimg       = None, # Override training duration: <int>
     batch      = None, # Override batch size: <int>
@@ -73,6 +74,7 @@ def setup_training_loop_kwargs(
     allow_tf32 = None, # Allow PyTorch to use TF32 for matmul and convolutions: <bool>, default = False
     nobench    = None, # Disable cuDNN benchmarking: <bool>, default = False
     workers    = None, # Override number of DataLoader workers: <int>, default = 3
+    prefetch   = None
 ):
     args = dnnlib.EasyDict()
 
@@ -126,7 +128,7 @@ def setup_training_loop_kwargs(
             
         args.training_set_kwargs = dnnlib.EasyDict(class_name='training.dataset.WSICoordDataset', 
                                       wsi_dir=wsi_dir, coord_dir=coord_dir, process_list=process_list, wsi_exten=wsi_exten, max_coord_per_wsi=max_coord_per_wsi, resolution=resolution, 
-                                      desc=desc, use_labels=False, max_size=None, xflip=False)
+                                      desc=desc, use_labels=False, max_size=2000000, xflip=False)
         args.data_loader_kwargs = dnnlib.EasyDict(pin_memory=True, num_workers=3, prefetch_factor=2)
     
     else:
@@ -185,6 +187,9 @@ def setup_training_loop_kwargs(
     cfg_specs = {
         'auto':      dict(ref_gpus=-1, kimg=25000,  mb=-1, mbstd=-1, fmaps=-1,  lrate=-1,     gamma=-1,   ema=-1,  ramp=0.05, map=2), # Populated dynamically based on resolution and GPU count.
         'stylegan2': dict(ref_gpus=8,  kimg=25000,  mb=32, mbstd=4,  fmaps=1,   lrate=0.002,  gamma=10,   ema=10,  ramp=None, map=8), # Uses mixed-precision, unlike the original StyleGAN2.
+        'KIDgan': dict(ref_gpus=4,  kimg=25000,  mb=16, mbstd=4,  fmaps=1,   lrate=0.002,  gamma=2,   ema=10,  ramp=None, map=8),
+        'BRCAgan': dict(ref_gpus=8,  kimg=25000,  mb=32, mbstd=4,  fmaps=1,   lrate=0.002,  gamma=2,   ema=10,  ramp=None, map=8),
+        'BRCAgan-red': dict(ref_gpus=4,  kimg=25000,  mb=16, mbstd=4,  fmaps=1,   lrate=0.002,  gamma=2,   ema=10,  ramp=None, map=8),
         'paper256':  dict(ref_gpus=8,  kimg=25000,  mb=64, mbstd=8,  fmaps=0.5, lrate=0.0025, gamma=1,    ema=20,  ramp=None, map=8),
         'paper512':  dict(ref_gpus=8,  kimg=25000,  mb=64, mbstd=8,  fmaps=1,   lrate=0.0025, gamma=0.5,  ema=20,  ramp=None, map=8),
         'paper1024': dict(ref_gpus=8,  kimg=25000,  mb=32, mbstd=4,  fmaps=1,   lrate=0.002,  gamma=2,    ema=10,  ramp=None, map=8),
@@ -200,7 +205,10 @@ def setup_training_loop_kwargs(
         spec.mb = max(min(gpus * min(4096 // res, 32), 64), gpus) # keep gpu memory consumption at bay
         spec.mbstd = min(spec.mb // gpus, 4) # other hyperparams behave more predictably if mbstd group size remains fixed
         spec.fmaps = 1 if res >= 512 else 0.5
-        spec.lrate = 0.002 if res >= 1024 else 0.0025
+        if lr is None:
+            spec.lrate = 0.002 if res >= 1024 else 0.0025
+        else:
+            spec.lrate = lr
         spec.gamma = 0.0002 * (res ** 2) / spec.mb # heuristic formula
         spec.ema = spec.mb * 10 / 32
 
@@ -217,6 +225,7 @@ def setup_training_loop_kwargs(
     args.D_opt_kwargs = dnnlib.EasyDict(class_name='torch.optim.Adam', lr=spec.lrate, betas=[0,0.99], eps=1e-8)
     args.loss_kwargs = dnnlib.EasyDict(class_name='training.loss.StyleGAN2Loss', r1_gamma=spec.gamma)
 
+    spec.ref_gpus = gpus
     args.total_kimg = spec.kimg
     args.batch_size = spec.mb
     args.batch_gpu = spec.mb // spec.ref_gpus
@@ -388,6 +397,12 @@ def setup_training_loop_kwargs(
         if not workers >= 1:
             raise UserError('--workers must be at least 1')
         args.data_loader_kwargs.num_workers = workers
+    
+    if prefetch is not None:
+        assert isinstance(workers, int)
+        if not prefetch >= 1:
+            raise UserError('--prefetch factor must be at least 1')
+        args.data_loader_kwargs.prefetch_factor = prefetch
 
     return desc, args
 
@@ -401,6 +416,7 @@ def subprocess_fn(rank, args, temp_dir):
         init_file = os.path.abspath(os.path.join(temp_dir, '.torch_distributed_init'))
         if os.name == 'nt':
             init_method = 'file:///' + init_file.replace('\\', '/')
+            print('Gloo init...')
             torch.distributed.init_process_group(backend='gloo', init_method=init_method, rank=rank, world_size=args.num_gpus)
         else:
             init_method = f'file://{init_file}'
@@ -454,7 +470,8 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--mirror', help='Enable dataset x-flips [default: false]', type=bool, metavar='BOOL')
 
 # Base config.
-@click.option('--cfg', help='Base config [default: auto]', type=click.Choice(['auto', 'stylegan2', 'paper256', 'paper512', 'paper1024', 'cifar']))
+@click.option('--cfg', help='Base config [default: auto]', type=click.Choice(['auto', 'stylegan2', 'KIDgan','BRCAgan','BRCAgan-red', 'paper256', 'paper512', 'paper1024', 'cifar']))
+@click.option('--lr', help='Overide learning rate', type=float)
 @click.option('--gamma', help='Override R1 gamma', type=float)
 @click.option('--kimg', help='Override training duration', type=int, metavar='INT')
 @click.option('--batch', help='Override batch size', type=int, metavar='INT')
@@ -476,6 +493,7 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--nobench', help='Disable cuDNN benchmarking', type=bool, metavar='BOOL')
 @click.option('--allow-tf32', help='Allow PyTorch to use TF32 internally', type=bool, metavar='BOOL')
 @click.option('--workers', help='Override number of DataLoader workers', type=int, metavar='INT')
+@click.option('--prefetch', help='Override prefetch factor of DataLoader', type=int, metavar='INT')
 
 def main(ctx, outdir, dry_run, **config_kwargs):
     """Train a GAN using the techniques described in the paper
