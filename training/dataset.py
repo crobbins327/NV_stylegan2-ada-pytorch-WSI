@@ -259,9 +259,9 @@ class WSICoordDataset(Dataset):
             self.process_list = None
         else:
             self.process_list = pd.read_csv(process_list)
-        
+        self.patch_size = resolution
         #Implement labels here..
-        self.coord_dict, self.wsi_names = self.createCoordDict(self.wsi_dir, self.wsi_exten, self.coord_dir, self.max_coord_per_wsi, self.process_list)
+        self.coord_dict, self.wsi_names = self.createCoordDict(self.wsi_dir, self.wsi_exten, self.coord_dir, self.max_coord_per_wsi, self.process_list, self.patch_size)
         
         if desc is None:
             name = str(self.coord_dir)
@@ -272,8 +272,6 @@ class WSICoordDataset(Dataset):
         print('Number of patches:', self.coord_size)
         # self.wsi = None
         # self.wsi_open = None
-        self.patch_level = 0
-        self.patch_size = resolution
         
         self._all_fnames = os.listdir(self.wsi_dir)
         
@@ -284,7 +282,7 @@ class WSICoordDataset(Dataset):
         super().__init__(name=name, raw_shape=raw_shape, **super_kwargs)
     
     @staticmethod
-    def createCoordDict(wsi_dir, wsi_exten, coord_dir, max_coord_per_wsi, process_list):
+    def createCoordDict(wsi_dir, wsi_exten, coord_dir, max_coord_per_wsi, process_list, patch_size):
         if process_list is None:
             #Only use WSI that have coord files....
             all_coord_files = sorted([x for x in os.listdir(coord_dir) if x.endswith('.h5')])
@@ -301,7 +299,7 @@ class WSICoordDataset(Dataset):
         #Loop through coord files, get coord length, randomly choose X coords for each wsi (max_coord_per_wsi)
         coord_dict = {}
         wsi_number = 0
-        for h5 in h5_names:
+        for h5, wsi_name in zip(h5_names, wsi_names):
             #All h5 paths must exist....
             h5_path = os.path.join(coord_dir, h5)
             with h5py.File(h5_path, "r") as f:
@@ -315,10 +313,33 @@ class WSICoordDataset(Dataset):
                     rand_ind = np.sort(random.sample(range(max_len), int(max_coord_per_wsi)))
                     coords = dset[rand_ind]
             #Check that coordinates and patch resolution is within the dimensions of the WSI... slow but only done once at beginning
-            wsi
-            for coord in coords:
-
-
+            wsi = openslide.OpenSlide(os.path.join(wsi_dir, wsi_name))
+            #Get the desired seg level for the patching based on process list
+            if self.process_list is not None:
+                seg_level = process_list.loc[process_list['slide_id']==wsi_name,'seg_level'].iloc[0]
+                #if seg_level != 0:
+                #    print('{} for {}'.format(seg_level, wsi_name))
+            else:
+                seg_level = 0
+                
+            dims = wsi.level_dimensions[seg_level]
+            print(wsi_name)
+            for i,coord in enumerate(coords):
+              #Check that coordinates are inside dims
+              changed = False
+              old_coord = coord.copy()
+              if coord[0]+patch_size > dims[0]:
+                  coord[0] = dims[0]-patch_size
+                  print('X not in bounds, adjusting')
+                  changed = True
+              if coord[1]+patch_size > dims[1]:
+                  coord[1] = dims[1]-patch_size
+                  print('Y not in bounds, adjusting')
+                  changed = True
+              if changed:
+                  print("Changing coord {} to {}".format(old_coord, coord))
+                  coords[i] = coord
+            
             #Store as dictionary with tuples {0: (coord, wsi_number), 1: (coord, wsi_number), etc.}
             dict_len = len(coord_dict)
             for i in range(coords.shape[0]):
