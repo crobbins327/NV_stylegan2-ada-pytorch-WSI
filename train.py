@@ -45,6 +45,7 @@ def setup_training_loop_kwargs(
     wsi_exten = None,
     max_coord_per_wsi = None,
     resolution = None,
+    rescale_mpp = None,
     desc = None,
     cond       = None, # Train conditional model based on dataset labels: <bool>, default = False
     subset     = None, # Train with only N images: <int>, default = all
@@ -125,10 +126,19 @@ def setup_training_loop_kwargs(
             wsi_exten = '.svs'
         if max_coord_per_wsi is None:
             max_coord_per_wsi = 'inf'
+        if rescale_mpp is not None:
+            assert isinstance(rescale_mpp, float)
+            rescale_bool = True
+            desired_mpp = rescale_mpp
+        else:
+            rescale_bool = False
+            desired_mpp = None
             
         args.training_set_kwargs = dnnlib.EasyDict(class_name='training.dataset.WSICoordDataset', 
-                                      wsi_dir=wsi_dir, coord_dir=coord_dir, process_list=process_list, wsi_exten=wsi_exten, max_coord_per_wsi=max_coord_per_wsi, resolution=resolution, 
-                                      desc=desc, use_labels=False, max_size=2000000, xflip=False)
+                                      wsi_dir=wsi_dir, coord_dir=coord_dir, process_list=process_list, 
+                                      wsi_exten=wsi_exten, max_coord_per_wsi=max_coord_per_wsi, resolution=resolution, 
+                                      desc=desc, rescale_mpp = rescale_bool, desired_mpp = desired_mpp, 
+                                      use_labels=False, max_size=2000000, xflip=False)
         args.data_loader_kwargs = dnnlib.EasyDict(pin_memory=True, num_workers=3, prefetch_factor=2)
     
     else:
@@ -464,6 +474,7 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--wsi_exten', help='WSI filename extension [default: .tif]', type=str)
 @click.option('--max_coord_per_wsi', help='Max patches from coordinate file per WSI', type=float)
 @click.option('--resolution', help='Patch resolution (depends on coord file for WSI) [default: 256]', type=int)
+@click.option('--rescale_mpp', default=None, help='Rescale the patches in dataset by micron per pixel amount? Set desired MPP (e.g. 0.25) [default: False/None]', type=float, metavar='FLOAT')
 @click.option('--desc', help='Dataset description [default: None]', type=str)
 @click.option('--cond', help='Train conditional model based on dataset labels [default: false]', type=bool, metavar='BOOL')
 @click.option('--subset', help='Train with only N images [default: all]', type=int, metavar='INT')

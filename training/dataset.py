@@ -319,7 +319,7 @@ class WSICoordDataset(Dataset):
             #Check that coordinates and patch resolution is within the dimensions of the WSI... slow but only done once at beginning
             wsi = openslide.OpenSlide(os.path.join(wsi_dir, wsi_name))
             #Get the desired seg level for the patching based on process list
-            if self.process_list is not None:
+            if process_list is not None:
                 seg_level = process_list.loc[process_list['slide_id']==wsi_name,'seg_level'].iloc[0]
                 #if seg_level != 0:
                 #    print('{} for {}'.format(seg_level, wsi_name))
@@ -329,20 +329,20 @@ class WSICoordDataset(Dataset):
             dims = wsi.level_dimensions[seg_level]
             # print(wsi_name)
             for i,coord in enumerate(coords):
-              #Check that coordinates are inside dims
-              changed = False
+                #Check that coordinates are inside dims
+                changed = False
             #   old_coord = coord.copy()
-              if coord[0]+patch_size > dims[0]:
-                  coord[0] = dims[0]-patch_size
+                if coord[0]+patch_size > dims[0]:
+                    coord[0] = dims[0]-patch_size
                 #   print('X not in bounds, adjusting')
-                  changed = True
-              if coord[1]+patch_size > dims[1]:
-                  coord[1] = dims[1]-patch_size
+                    changed = True
+                if coord[1]+patch_size > dims[1]:
+                    coord[1] = dims[1]-patch_size
                 #   print('Y not in bounds, adjusting')
-                  changed = True
-              if changed:
+                    changed = True
+                if changed:
                 #   print("Changing coord {} to {}".format(old_coord, coord))
-                  coords[i] = coord
+                    coords[i] = coord
             
             #Store as dictionary with tuples {0: (coord, wsi_number), 1: (coord, wsi_number), etc.}
             dict_len = len(coord_dict)
@@ -364,34 +364,35 @@ class WSICoordDataset(Dataset):
         #check dimensions, adjust coordinate if out of bounds
         coord = (int(coord[0]), int(coord[1])) 
         if coord[0]+patch_size > wsi_dim[0]:
-        coord[0] = int(wsi_dim[0] - patch_size)
+            coord[0] = int(wsi_dim[0] - patch_size)
         
         if coord[1]+patch_size > wsi_dim[1]:
-        coord[1] = int(wsi_dim[1] - patch_size) 
+            coord[1] = int(wsi_dim[1] - patch_size) 
         
         return coord
 
-    @staticmethod
-    def scalePatch(wsi, coord, input_mpp=0.5, desired_mpp=0.25, patch_size=512, eps=0.05, level=0):
+    def scalePatch(self, wsi, coord, input_mpp=0.5, desired_mpp=0.25, patch_size=512, eps=0.05, level=0):
+        desired_mpp = float(desired_mpp)
+        input_mpp = float(input_mpp)
         factor = desired_mpp/input_mpp
         #Openslide get dimensions of full WSI
         dims = wsi.level_dimensions[0]
         if input_mpp > desired_mpp + eps or input_mpp < desired_mpp - eps:
-            print('scale by {:.2f} factor'.format(factor))
-            # if factor > 1:
-            #input mpp must be smaller and therefore at higher magnification (e.g. desired 40x vs input 60x)
+            #print('scale by {:.2f} factor'.format(factor))
+            # if factor > 1
+            #input mpp must be smaller and therefore at higher magnification (e.g. desired 40x vs input 60x) and vice versa
             #approach: shrink a larger patch by factor to the desired patch size or enlarge a smaller patch to desired patch size
             scaled_psize = int(patch_size*factor)
             #check and adjust dimensions of coord based on scaled patchsize
-            coord = adjPatchOOB(dims, coord, scaled_psize)
+            coord = self.adjPatchOOB(dims, coord, scaled_psize)
             adj_patch = np.array(wsi.read_region(coord, level, (scaled_psize, scaled_psize)).convert('RGB'))
             #shrink patch down to desired mpp if factor > 1
             #enlarge if factor < 1
             patch = cv2.resize(adj_patch, (patch_size, patch_size), interpolation=cv2.INTER_LINEAR)
             return patch
         else: 
-            print('skip scaling factor {:.2f}. input um per pixel ({}) within +/- {} of desired MPP ({}).'.format(factor, input_mpp, eps, desired_mpp))
-            coord = adjPatchOOB(dims, coord, patch_size)
+            #print('skip scaling factor {:.2f}. input um per pixel ({}) within +/- {} of desired MPP ({}).'.format(factor, input_mpp, eps, desired_mpp))
+            coord = self.adjPatchOOB(dims, coord, patch_size)
             patch = np.array(wsi.read_region(coord, level, (patch_size, patch_size)).convert('RGB'))
             return patch
             
@@ -426,7 +427,7 @@ class WSICoordDataset(Dataset):
                     print(e)
                     print(wsi_name)
                     raise ValueError('Cannot find slide MPP from process list or Openslide properties. Set rescale_mpp to False to avoid this error or add slide MPPs to process list.')
-            img = scalePatch(wsi=wsi, coord=coord, input_mpp=mpp, desired_mpp=self.desired_mpp, patch_size=self.patch_size, level=seg_level) 
+            img = self.scalePatch(wsi=wsi, coord=coord, input_mpp=mpp, desired_mpp=self.desired_mpp, patch_size=self.patch_size, level=seg_level) 
         else:
             img = np.array(wsi.read_region(coord, seg_level, (self.patch_size, self.patch_size)).convert('RGB'))
         # img = img.transpose(2, 0, 1) # HWC => CHW
