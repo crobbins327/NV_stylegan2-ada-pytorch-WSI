@@ -17,6 +17,7 @@ import openslide
 import h5py
 import random
 import pandas as pd
+import cv2
 
 try:
     import pyspng
