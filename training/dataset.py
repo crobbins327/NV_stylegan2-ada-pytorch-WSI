@@ -363,14 +363,14 @@ class WSICoordDataset(Dataset):
         #assume coord starts at (0,0) in line with original WSI,
         #therefore the patch is only out-of-bounds if the coord+patchsize exceeds the WSI dimensions
         #check dimensions, adjust coordinate if out of bounds
-        coord = (int(coord[0]), int(coord[1])) 
+        coord = [int(coord[0]), int(coord[1])] 
         if coord[0]+patch_size > wsi_dim[0]:
             coord[0] = int(wsi_dim[0] - patch_size)
         
         if coord[1]+patch_size > wsi_dim[1]:
             coord[1] = int(wsi_dim[1] - patch_size) 
         
-        return coord
+        return tuple(coord)
 
     def scalePatch(self, wsi, coord, input_mpp=0.5, desired_mpp=0.25, patch_size=512, eps=0.05, level=0):
         desired_mpp = float(desired_mpp)
