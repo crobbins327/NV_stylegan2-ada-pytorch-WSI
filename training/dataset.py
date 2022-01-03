@@ -17,12 +17,8 @@ import openslide
 import h5py
 import random
 import pandas as pd
-<<<<<<< HEAD
 from training.wsi_utils import isWhitePatch_S, isBlackPatch_S
-||||||| merged common ancestors
-=======
 import cv2
->>>>>>> 70356ebe0dafb82806838ad17221b7802ee29d70
 
 try:
     import pyspng
@@ -257,7 +253,7 @@ class WSICoordDataset(Dataset):
         desc = None,
         rescale_mpp = True,
         desired_mpp = 0.25,
-        check_white_black = True
+        check_white_black = False,
         **super_kwargs,         # Additional arguments for the Dataset base class.
     ):
         self.wsi_dir = wsi_dir
@@ -293,7 +289,7 @@ class WSICoordDataset(Dataset):
         super().__init__(name=name, raw_shape=raw_shape, **super_kwargs)
     
     @staticmethod
-    def createCoordDict(wsi_dir, wsi_exten, coord_dir, max_coord_per_wsi, process_list, patch_size, check_white_black=True):
+    def createCoordDict(wsi_dir, wsi_exten, coord_dir, max_coord_per_wsi, process_list, patch_size, check_white_black=False):
         if process_list is None:
             #Only use WSI that have coord files....
             all_coord_files = sorted([x for x in os.listdir(coord_dir) if x.endswith('.h5')])
@@ -353,12 +349,14 @@ class WSICoordDataset(Dataset):
                     coords[i] = coord
                 if check_white_black:
                     patch = np.array(wsi.read_region(coord, seg_level, (patch_size, patch_size)).convert('RGB'))
-                    print('Checking if batch is white or black...')
+                    #print('Checking if patch is white or black...')
                     if isBlackPatch_S(patch, rgbThresh=20, percentage=0.05) or isWhitePatch_S(patch, rgbThresh=220, percentage=0.5):
-                        print('Removing coord because patch is black or white...')
-                        del_index = del_index.append(i)
+                        #print('Removing coord because patch is black or white...')
+                        #print(i)
+                        del_index.append(i)
             
             if len(del_index) > 0:
+                print('Removing {} coords that have black or white patches....'.format(len(del_index)))
                 coords = np.delete(coords, del_index, axis=0)    
             
             #Store as dictionary with tuples {0: (coord, wsi_number), 1: (coord, wsi_number), etc.}
