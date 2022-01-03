@@ -17,7 +17,12 @@ import openslide
 import h5py
 import random
 import pandas as pd
+<<<<<<< HEAD
 from training.wsi_utils import isWhitePatch_S, isBlackPatch_S
+||||||| merged common ancestors
+=======
+import cv2
+>>>>>>> 70356ebe0dafb82806838ad17221b7802ee29d70
 
 try:
     import pyspng
