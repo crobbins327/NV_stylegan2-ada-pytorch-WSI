@@ -315,7 +315,7 @@ class WSICoordDataset(Dataset):
             #Check that coordinates and patch resolution is within the dimensions of the WSI... slow but only done once at beginning
             wsi = openslide.OpenSlide(os.path.join(wsi_dir, wsi_name))
             #Get the desired seg level for the patching based on process list
-            if self.process_list is not None:
+            if process_list is not None:
                 seg_level = process_list.loc[process_list['slide_id']==wsi_name,'seg_level'].iloc[0]
                 #if seg_level != 0:
                 #    print('{} for {}'.format(seg_level, wsi_name))
@@ -323,21 +323,21 @@ class WSICoordDataset(Dataset):
                 seg_level = 0
                 
             dims = wsi.level_dimensions[seg_level]
-            print(wsi_name)
+            #print(wsi_name)
             for i,coord in enumerate(coords):
               #Check that coordinates are inside dims
               changed = False
               old_coord = coord.copy()
               if coord[0]+patch_size > dims[0]:
                   coord[0] = dims[0]-patch_size
-                  print('X not in bounds, adjusting')
+             #     print('X not in bounds, adjusting')
                   changed = True
               if coord[1]+patch_size > dims[1]:
                   coord[1] = dims[1]-patch_size
-                  print('Y not in bounds, adjusting')
+             #     print('Y not in bounds, adjusting')
                   changed = True
               if changed:
-                  print("Changing coord {} to {}".format(old_coord, coord))
+             #     print("Changing coord {} to {}".format(old_coord, coord))
                   coords[i] = coord
             
             #Store as dictionary with tuples {0: (coord, wsi_number), 1: (coord, wsi_number), etc.}
