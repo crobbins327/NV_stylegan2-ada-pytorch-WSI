@@ -17,6 +17,7 @@ import openslide
 import h5py
 import random
 import pandas as pd
+from training.wsi_utils import isWhitePatch_S, isBlackPatch_S
 
 try:
     import pyspng
@@ -239,7 +240,7 @@ class ImageFolderDataset(Dataset):
         return labels
 
 #----------------------------------------------------------------------------
-    
+
 class WSICoordDataset(Dataset):  
     def __init__(self,
         wsi_dir,                   # Path to WSI directory.
@@ -251,6 +252,7 @@ class WSICoordDataset(Dataset):
         desc = None,
         rescale_mpp = True,
         desired_mpp = 0.25,
+        check_white_black = True
         **super_kwargs,         # Additional arguments for the Dataset base class.
     ):
         self.wsi_dir = wsi_dir
@@ -265,7 +267,7 @@ class WSICoordDataset(Dataset):
         self.rescale_mpp = rescale_mpp
         self.desired_mpp = desired_mpp
         #Implement labels here..
-        self.coord_dict, self.wsi_names = self.createCoordDict(self.wsi_dir, self.wsi_exten, self.coord_dir, self.max_coord_per_wsi, self.process_list, self.patch_size)
+        self.coord_dict, self.wsi_names = self.createCoordDict(self.wsi_dir, self.wsi_exten, self.coord_dir, self.max_coord_per_wsi, self.process_list, self.patch_size, check_white_black)
         
         if desc is None:
             name = str(self.coord_dir)
@@ -286,7 +288,7 @@ class WSICoordDataset(Dataset):
         super().__init__(name=name, raw_shape=raw_shape, **super_kwargs)
     
     @staticmethod
-    def createCoordDict(wsi_dir, wsi_exten, coord_dir, max_coord_per_wsi, process_list, patch_size):
+    def createCoordDict(wsi_dir, wsi_exten, coord_dir, max_coord_per_wsi, process_list, patch_size, check_white_black=True):
         if process_list is None:
             #Only use WSI that have coord files....
             all_coord_files = sorted([x for x in os.listdir(coord_dir) if x.endswith('.h5')])
@@ -327,6 +329,7 @@ class WSICoordDataset(Dataset):
                 seg_level = 0
                 
             dims = wsi.level_dimensions[seg_level]
+            del_index = []
             # print(wsi_name)
             for i,coord in enumerate(coords):
                 #Check that coordinates are inside dims
@@ -343,6 +346,15 @@ class WSICoordDataset(Dataset):
                 if changed:
                 #   print("Changing coord {} to {}".format(old_coord, coord))
                     coords[i] = coord
+                if check_white_black:
+                    patch = np.array(wsi.read_region(coord, seg_level, (patch_size, patch_size)).convert('RGB'))
+                    print('Checking if batch is white or black...')
+                    if isBlackPatch_S(patch, rgbThresh=20, percentage=0.05) or isWhitePatch_S(patch, rgbThresh=220, percentage=0.5):
+                        print('Removing coord because patch is black or white...')
+                        del_index = del_index.append(i)
+            
+            if len(del_index) > 0:
+                coords = np.delete(coords, del_index, axis=0)    
             
             #Store as dictionary with tuples {0: (coord, wsi_number), 1: (coord, wsi_number), etc.}
             dict_len = len(coord_dict)
