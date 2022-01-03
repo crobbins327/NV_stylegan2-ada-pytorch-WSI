@@ -249,6 +249,8 @@ class WSICoordDataset(Dataset):
         max_coord_per_wsi = 'inf',
         resolution      = 256, # Ensure specific resolution.
         desc = None,
+        rescale_mpp = True,
+        desired_mpp = 0.25,
         **super_kwargs,         # Additional arguments for the Dataset base class.
     ):
         self.wsi_dir = wsi_dir
@@ -260,6 +262,8 @@ class WSICoordDataset(Dataset):
         else:
             self.process_list = pd.read_csv(process_list)
         self.patch_size = resolution
+        self.rescale_mpp = rescale_mpp
+        self.desired_mpp = desired_mpp
         #Implement labels here..
         self.coord_dict, self.wsi_names = self.createCoordDict(self.wsi_dir, self.wsi_exten, self.coord_dir, self.max_coord_per_wsi, self.process_list, self.patch_size)
         
@@ -323,21 +327,21 @@ class WSICoordDataset(Dataset):
                 seg_level = 0
                 
             dims = wsi.level_dimensions[seg_level]
-            print(wsi_name)
+            # print(wsi_name)
             for i,coord in enumerate(coords):
               #Check that coordinates are inside dims
               changed = False
-              old_coord = coord.copy()
+            #   old_coord = coord.copy()
               if coord[0]+patch_size > dims[0]:
                   coord[0] = dims[0]-patch_size
-                  print('X not in bounds, adjusting')
+                #   print('X not in bounds, adjusting')
                   changed = True
               if coord[1]+patch_size > dims[1]:
                   coord[1] = dims[1]-patch_size
-                  print('Y not in bounds, adjusting')
+                #   print('Y not in bounds, adjusting')
                   changed = True
               if changed:
-                  print("Changing coord {} to {}".format(old_coord, coord))
+                #   print("Changing coord {} to {}".format(old_coord, coord))
                   coords[i] = coord
             
             #Store as dictionary with tuples {0: (coord, wsi_number), 1: (coord, wsi_number), etc.}
@@ -350,6 +354,47 @@ class WSICoordDataset(Dataset):
             
         return coord_dict, wsi_names 
     
+    @staticmethod    
+    def adjPatchOOB(wsi_dim, coord, patch_size):
+        #wsi_dim = (wsi_width, wsi_height)
+        #coord = (x, y) with y axis inverted or point (0,0) starting in top left of image
+        #patchsize = integer for square patch only
+        #assume coord starts at (0,0) in line with original WSI,
+        #therefore the patch is only out-of-bounds if the coord+patchsize exceeds the WSI dimensions
+        #check dimensions, adjust coordinate if out of bounds
+        coord = (int(coord[0]), int(coord[1])) 
+        if coord[0]+patch_size > wsi_dim[0]:
+        coord[0] = int(wsi_dim[0] - patch_size)
+        
+        if coord[1]+patch_size > wsi_dim[1]:
+        coord[1] = int(wsi_dim[1] - patch_size) 
+        
+        return coord
+
+    @staticmethod
+    def scalePatch(wsi, coord, input_mpp=0.5, desired_mpp=0.25, patch_size=512, eps=0.05, level=0):
+        factor = desired_mpp/input_mpp
+        #Openslide get dimensions of full WSI
+        dims = wsi.level_dimensions[0]
+        if input_mpp > desired_mpp + eps or input_mpp < desired_mpp - eps:
+            print('scale by {:.2f} factor'.format(factor))
+            # if factor > 1:
+            #input mpp must be smaller and therefore at higher magnification (e.g. desired 40x vs input 60x)
+            #approach: shrink a larger patch by factor to the desired patch size or enlarge a smaller patch to desired patch size
+            scaled_psize = int(patch_size*factor)
+            #check and adjust dimensions of coord based on scaled patchsize
+            coord = adjPatchOOB(dims, coord, scaled_psize)
+            adj_patch = np.array(wsi.read_region(coord, level, (scaled_psize, scaled_psize)).convert('RGB'))
+            #shrink patch down to desired mpp if factor > 1
+            #enlarge if factor < 1
+            patch = cv2.resize(adj_patch, (patch_size, patch_size), interpolation=cv2.INTER_LINEAR)
+            return patch
+        else: 
+            print('skip scaling factor {:.2f}. input um per pixel ({}) within +/- {} of desired MPP ({}).'.format(factor, input_mpp, eps, desired_mpp))
+            coord = adjPatchOOB(dims, coord, patch_size)
+            patch = np.array(wsi.read_region(coord, level, (patch_size, patch_size)).convert('RGB'))
+            return patch
+            
     def _load_raw_image(self, raw_idx):
         coord, wsi_num = self.coord_dict[raw_idx % self.coord_size]
         wsi_name = self.wsi_names[wsi_num]
@@ -361,13 +406,29 @@ class WSICoordDataset(Dataset):
         # if self.wsi_open is None or self.wsi_open != self.wsi_names[wsi_num]:
             # self.wsi = openslide.OpenSlide(img_path)
             # self.wsi_open = self.wsi_names[wsi_num]
+        mpp = None
         if self.process_list is not None:
             seg_level = self.process_list.loc[self.process_list['slide_id']==wsi_name,'seg_level'].iloc[0]
+            try:
+                mpp = self.process_list.loc[self.process_list['slide_id']==wsi_name,'MPP'].iloc[0]
+            except Exception as e:
+                pass
             #if seg_level != 0:
             #    print('{} for {}'.format(seg_level, wsi_name))
         else:
             seg_level = 0
-        img = np.array(wsi.read_region(coord, seg_level, (self.patch_size, self.patch_size)).convert('RGB'))
+        
+        if self.rescale_mpp:
+            if mpp is None:
+                try:
+                    mpp = wsi.properties['openslide.mpp-x']
+                except Exception as e:
+                    print(e)
+                    print(wsi_name)
+                    raise ValueError('Cannot find slide MPP from process list or Openslide properties. Set rescale_mpp to False to avoid this error or add slide MPPs to process list.')
+            img = scalePatch(wsi=wsi, coord=coord, input_mpp=mpp, desired_mpp=self.desired_mpp, patch_size=self.patch_size, level=seg_level) 
+        else:
+            img = np.array(wsi.read_region(coord, seg_level, (self.patch_size, self.patch_size)).convert('RGB'))
         # img = img.transpose(2, 0, 1) # HWC => CHW
         img = np.moveaxis(img, 2, 0) # HWC => CHW
         return img
