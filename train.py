@@ -47,6 +47,8 @@ def setup_training_loop_kwargs(
     resolution = None,
     rescale_mpp = None,
     desc = None,
+    load_mode = 'openslide',
+    make_all_pipes = None,
     cond       = None, # Train conditional model based on dataset labels: <bool>, default = False
     subset     = None, # Train with only N images: <int>, default = all
     mirror     = None, # Augment dataset with x-flips: <bool>, default = False
@@ -54,9 +56,12 @@ def setup_training_loop_kwargs(
     # Base config.
     cfg        = None, # Base config: 'auto' (default), 'stylegan2', 'paper256', 'paper512', 'paper1024', 'cifar'
     lr         = None,
+    g_lr       = None,
+    d_lr       = None,
     gamma      = None, # Override R1 gamma: <float>
     kimg       = None, # Override training duration: <int>
     batch      = None, # Override batch size: <int>
+    ema        = None,
 
     # Discriminator augmentation.
     aug        = None, # Augmentation mode: 'ada' (default), 'noaug', 'fixed'
@@ -124,8 +129,12 @@ def setup_training_loop_kwargs(
         assert isinstance(resolution, int)
         if wsi_exten is None:
             wsi_exten = '.svs'
+        #grab element from list if it is a list of length 1
+        #this is here because the hash for dataset arguments is different compared to list or string when looking up the cache files
+        if len(wsi_exten)==1:
+            wsi_exten = wsi_exten[0]
         if max_coord_per_wsi is None:
-            max_coord_per_wsi = 'inf'
+            max_coord_per_wsi = float('inf')
         if rescale_mpp is not None:
             assert isinstance(rescale_mpp, float)
             rescale_bool = True
@@ -137,8 +146,9 @@ def setup_training_loop_kwargs(
         args.training_set_kwargs = dnnlib.EasyDict(class_name='training.dataset.WSICoordDataset', 
                                       wsi_dir=wsi_dir, coord_dir=coord_dir, process_list=process_list, 
                                       wsi_exten=wsi_exten, max_coord_per_wsi=max_coord_per_wsi, resolution=resolution, 
-                                      desc=desc, rescale_mpp = rescale_bool, desired_mpp = desired_mpp, 
-                                      use_labels=False, max_size=2000000, xflip=False)
+                                      desc=desc, rescale_mpp = rescale_bool, desired_mpp = desired_mpp,
+                                      load_mode=load_mode, make_all_pipelines=make_all_pipes, 
+                                      use_labels=False, max_size=8000000, xflip=False)
         args.data_loader_kwargs = dnnlib.EasyDict(pin_memory=True, num_workers=3, prefetch_factor=2)
     
     else:
@@ -146,7 +156,19 @@ def setup_training_loop_kwargs(
         assert isinstance(data, str)
         args.training_set_kwargs = dnnlib.EasyDict(class_name='training.dataset.ImageFolderDataset', path=data, use_labels=True, max_size=None, xflip=False)
         args.data_loader_kwargs = dnnlib.EasyDict(pin_memory=True, num_workers=3, prefetch_factor=2)
-        
+    
+    if workers is not None:
+        assert isinstance(workers, int)
+        if not workers >= 1:
+            raise UserError('--workers must be at least 1')
+        args.data_loader_kwargs.num_workers = workers
+    
+    if prefetch is not None:
+        assert isinstance(prefetch, int)
+        if not prefetch >= 1:
+            raise UserError('--prefetch factor must be at least 1')
+        args.data_loader_kwargs.prefetch_factor = prefetch
+
     try:
         print('Testing to load training set....')
         training_set = dnnlib.util.construct_class_by_name(**args.training_set_kwargs) # subclass of training.dataset.Dataset
@@ -177,7 +199,11 @@ def setup_training_loop_kwargs(
         if subset < args.training_set_kwargs.max_size:
             args.training_set_kwargs.max_size = subset
             args.training_set_kwargs.random_seed = args.random_seed
-
+    
+    if max_coord_per_wsi is not None and max_coord_per_wsi!=float('inf'):
+        desc += f'-maxcoord{max_coord_per_wsi}'
+        args.training_set_kwargs.random_seed = args.random_seed
+    
     if mirror is None:
         mirror = False
     assert isinstance(mirror, bool)
@@ -197,7 +223,8 @@ def setup_training_loop_kwargs(
     cfg_specs = {
         'auto':      dict(ref_gpus=-1, kimg=25000,  mb=-1, mbstd=-1, fmaps=-1,  lrate=-1,     gamma=-1,   ema=-1,  ramp=0.05, map=2), # Populated dynamically based on resolution and GPU count.
         'stylegan2': dict(ref_gpus=8,  kimg=25000,  mb=32, mbstd=4,  fmaps=1,   lrate=0.002,  gamma=10,   ema=10,  ramp=None, map=8), # Uses mixed-precision, unlike the original StyleGAN2.
-        'KIDgan': dict(ref_gpus=4,  kimg=25000,  mb=16, mbstd=4,  fmaps=1,   lrate=0.002,  gamma=2,   ema=10,  ramp=None, map=8),
+        'KIDgan': dict(ref_gpus=4,  kimg=25000,  mb=16, mbstd=4,  fmaps=1,   lrate=0.002,  gamma=0.1,   ema=10,  ramp=None, map=8),
+        'KIDgan-512': dict(ref_gpus=4,  kimg=25000,  mb=32, mbstd=4,  fmaps=1,   lrate=0.001,  gamma=0.5,   ema=20,  ramp=None, map=8),
         'BRCAgan': dict(ref_gpus=8,  kimg=25000,  mb=32, mbstd=4,  fmaps=1,   lrate=0.002,  gamma=2,   ema=10,  ramp=None, map=8),
         'BRCAgan-red': dict(ref_gpus=4,  kimg=25000,  mb=16, mbstd=4,  fmaps=1,   lrate=0.002,  gamma=2,   ema=10,  ramp=None, map=8),
         'paper256':  dict(ref_gpus=8,  kimg=25000,  mb=64, mbstd=8,  fmaps=0.5, lrate=0.0025, gamma=1,    ema=20,  ramp=None, map=8),
@@ -231,8 +258,31 @@ def setup_training_loop_kwargs(
     args.G_kwargs.synthesis_kwargs.conv_clamp = args.D_kwargs.conv_clamp = 256 # clamp activations to avoid float16 overflow
     args.D_kwargs.epilogue_kwargs.mbstd_group_size = spec.mbstd
 
-    args.G_opt_kwargs = dnnlib.EasyDict(class_name='torch.optim.Adam', lr=spec.lrate, betas=[0,0.99], eps=1e-8)
-    args.D_opt_kwargs = dnnlib.EasyDict(class_name='torch.optim.Adam', lr=spec.lrate, betas=[0,0.99], eps=1e-8)
+    if lr is not None and (g_lr is None) and (d_lr is None):
+        assert isinstance(lr, float)
+        if not lr > 0:
+            raise UserError('--lr must be non-negative')
+        desc += f'-lr{lr:g}'
+        spec.lrate = lr
+    
+    if g_lr is not None:
+        assert isinstance(g_lr, float)        
+        if not g_lr > 0:
+            raise UserError('--g_lr must be non-negative')
+        desc += f'-g_lr{g_lr:g}'
+    else:
+        g_lr = spec.lrate
+
+    if d_lr is not None:
+        assert isinstance(d_lr, float)        
+        if not d_lr > 0:
+            raise UserError('--d_lr must be non-negative')
+        desc += f'-d_lr{d_lr:g}'
+    else:
+        d_lr = spec.lrate
+    
+    args.G_opt_kwargs = dnnlib.EasyDict(class_name='torch.optim.Adam', lr=g_lr, betas=[0,0.99], eps=1e-8)
+    args.D_opt_kwargs = dnnlib.EasyDict(class_name='torch.optim.Adam', lr=d_lr, betas=[0,0.99], eps=1e-8)
     args.loss_kwargs = dnnlib.EasyDict(class_name='training.loss.StyleGAN2Loss', r1_gamma=spec.gamma)
 
     spec.ref_gpus = gpus
@@ -253,6 +303,13 @@ def setup_training_loop_kwargs(
             raise UserError('--gamma must be non-negative')
         desc += f'-gamma{gamma:g}'
         args.loss_kwargs.r1_gamma = gamma
+    
+    if ema is not None:
+        assert isinstance(ema, int)
+        if not ema >= 0:
+            raise UserError('--ema must be non-negative')
+        desc += f'-ema{ema:d}'
+        args.ema_kimg = ema
 
     if kimg is not None:
         assert isinstance(kimg, int)
@@ -402,17 +459,6 @@ def setup_training_loop_kwargs(
     if allow_tf32:
         args.allow_tf32 = True
 
-    if workers is not None:
-        assert isinstance(workers, int)
-        if not workers >= 1:
-            raise UserError('--workers must be at least 1')
-        args.data_loader_kwargs.num_workers = workers
-    
-    if prefetch is not None:
-        assert isinstance(workers, int)
-        if not prefetch >= 1:
-            raise UserError('--prefetch factor must be at least 1')
-        args.data_loader_kwargs.prefetch_factor = prefetch
 
     return desc, args
 
@@ -471,19 +517,24 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--wsi_dir', help='WSI directory', metavar='DIR')
 @click.option('--coord_dir', help='h5 coordinate file directory', metavar='DIR')
 @click.option('--process_list', help='optional path to WSI process list csv', metavar='PATH')
-@click.option('--wsi_exten', help='WSI filename extension [default: .tif]', type=str)
+@click.option('--wsi_exten', help='WSI filename extension or comma separated list of extensions [default: .svs]', type=CommaSeparatedList())
 @click.option('--max_coord_per_wsi', help='Max patches from coordinate file per WSI', type=float)
 @click.option('--resolution', help='Patch resolution (depends on coord file for WSI) [default: 256]', type=int)
 @click.option('--rescale_mpp', default=None, help='Rescale the patches in dataset by micron per pixel amount? Set desired MPP (e.g. 0.25) [default: False/None]', type=float, metavar='FLOAT')
 @click.option('--desc', help='Dataset description [default: None]', type=str)
+@click.option('--load_mode', default='openslide', help='WSI loading method [default: openslide]', type=str)
+@click.option('--make_all_pipes', is_flag=True, default=False, help='Make all image pipelines for WSI loading?')
 @click.option('--cond', help='Train conditional model based on dataset labels [default: false]', type=bool, metavar='BOOL')
 @click.option('--subset', help='Train with only N images [default: all]', type=int, metavar='INT')
 @click.option('--mirror', help='Enable dataset x-flips [default: false]', type=bool, metavar='BOOL')
 
 # Base config.
-@click.option('--cfg', help='Base config [default: auto]', type=click.Choice(['auto', 'stylegan2', 'KIDgan','BRCAgan','BRCAgan-red', 'paper256', 'paper512', 'paper1024', 'cifar']))
+@click.option('--cfg', help='Base config [default: auto]', type=click.Choice(['auto', 'stylegan2', 'KIDgan','KIDgan-512', 'BRCAgan','BRCAgan-red', 'paper256', 'paper512', 'paper1024', 'cifar']))
 @click.option('--lr', help='Overide learning rate', type=float)
+@click.option('--g_lr', help='Set generator learning rate', type=float)
+@click.option('--d_lr', help='Set discriminator learning rate', type=float)
 @click.option('--gamma', help='Override R1 gamma', type=float)
+@click.option('--ema', help='Override EMA', type=int)
 @click.option('--kimg', help='Override training duration', type=int, metavar='INT')
 @click.option('--batch', help='Override batch size', type=int, metavar='INT')
 

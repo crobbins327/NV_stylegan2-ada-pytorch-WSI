@@ -16,6 +16,8 @@ import PIL.Image
 import numpy as np
 import torch
 import dnnlib
+#import gc
+#gc.enable()
 from torch_utils import misc
 from torch_utils import training_stats
 from torch_utils.ops import conv2d_gradfix
@@ -420,6 +422,7 @@ def training_loop(
         cur_tick += 1
         tick_start_nimg = cur_nimg
         tick_start_time = time.time()
+        #gc.collect()
         maintenance_time = tick_start_time - tick_end_time
         if done:
             break

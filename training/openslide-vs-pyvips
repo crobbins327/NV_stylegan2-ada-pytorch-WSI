@@ -1,0 +1,78 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Jan  5 11:55:36 2022
+
+@author: cjr66
+"""
+
+ import time
+ start = time.time()
+ wsi_pipelines = {}
+ for w in wsi_names[:50]:
+     wsi_vips = pyvips.Image.openslideload(os.path.join(wsi_dir, w), level=0)
+     reg = pyvips.Region.new(wsi_vips)
+     wsi_pipelines[w] = (reg, [wsi_vips.width, wsi_vips.height, wsi_vips.bands])
+ end = time.time()
+ print('Vips load time:', end-start)
+ 
+ wsi_pipelines_os={}
+ start = time.time()
+ for w in wsi_names[:50]:
+     wsi_os = openslide.OpenSlide(os.path.join(wsi_dir, w))
+     wsi_pipelines_os[w] = (wsi_os, list(wsi_os.level_dimensions[0])+[4])
+ end = time.time()
+ print('OS load time:', end-start)
+ 
+ start = time.time()
+ i=1
+ plt.figure()
+ for w in wsi_names[:5]:
+     wsi_op, dims = wsi_pipelines_os[w]
+     patchOP = np.array(wsi_op.read_region((dims[0]//2,dims[1]//2),0,(1024,1024)).convert('RGB'))
+     # plt.figure()
+     plt.subplot(int('15{}'.format(i)))
+     plt.imshow(patchOP)
+     # plt.show()
+     i+=1
+ end = time.time()
+ plt.show()
+ print('OS patch time:',end-start)
+ 
+ start = time.time()
+ i=1
+ plt.figure()
+ for w in wsi_names[:5]:
+     reg, dims = wsi_pipelines[w]
+     patch = fetch(reg, 1024, dims[0]//2, dims[1]//2)
+     # patchNP = np.ndarray(buffer=patch, dtype=np.uint8, shape=[1024, 1024, 4])
+     patch = np.array(Image.frombuffer("RGBA", (1024, 1024), patch, 'raw', "RGBA", 0, 1).convert('RGB'))
+     plt.subplot(int('15{}'.format(i)))
+     # plt.figure()
+     plt.imshow(patch)
+     # plt.show()
+     i+=1
+ end = time.time()
+ plt.show()
+ print('Vips patch time:',end-start)
+ 
+ del patch, wsi_pipelines, wsi_pipelines_os, patchOP
+ 
+ wsi_vips = pyvips.Image.openslideload(os.path.join(wsi_dir, wsi_names[5]), level=1)
+ wsi_op = openslide.OpenSlide(os.path.join(wsi_dir, wsi_names[5]))
+ dims = wsi_op.level_dimensions[0]
+ patchOP = np.array(wsi_op.read_region((dims[0]//2,dims[1]//2),0,(1024,1024)).convert('RGB'))
+ 
+ reg, dims = wsi_pipelines[wsi_names[5]]
+ # reg = pyvips.Region.new(wsi_vips)
+ pcrop = wsi_vips.crop(dims[0]//4, dims[1]//4, 1024, 1024)
+ patch = fetch(reg, 1024, dims[0]//2, dims[1]//2)
+ # im = wsi_vips.crop(50000, 30000, 1024, 1024)
+ # patchNP = np.ndarray(buffer=im.write_to_memory(), dtype=np.uint8, shape=[im.height, im.width, im.bands])
+ patchNP = np.ndarray(buffer=pcrop.write_to_memory(), dtype=np.uint8, shape=[1024, 1024, dims[2]])
+ plt.figure()
+ plt.subplot(121)
+ plt.imshow(patchNP)
+ plt.subplot(122)
+ plt.imshow(patchOP)
+ plt.show()

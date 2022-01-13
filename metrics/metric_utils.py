@@ -186,6 +186,22 @@ def compute_feature_stats_for_dataset(opts, detector_url, detector_kwargs, rel_l
     cache_file = None
     if opts.cache:
         # Choose cache file name.
+        if opts.dataset_kwargs.class_name=='training.dataset.WSICoordDataset':
+            print('Loading cache for WSI coord dataset...')
+            del opts.dataset_kwargs.load_mode
+            del opts.dataset_kwargs.make_all_pipelines
+            #try: 
+            #    del opts.dataset_kwargs.max_size
+            #    print('Not including max_size in hash code for cache file')
+            #except Exception as e:
+            #    print(e)
+            #    print('Dataset does not have max_size specified, skipping parameter for hash code in cache file...')
+            try:
+               del opts.dataset_kwargs.random_seed
+               print('Not including random_seed in hash code for cache file')
+            except Exception as e:
+               print(e)
+               print('Dataset does not have random_seed specified, skipping parameter for hash code in cache file...')
         args = dict(dataset_kwargs=opts.dataset_kwargs, detector_url=detector_url, detector_kwargs=detector_kwargs, stats_kwargs=stats_kwargs)
         md5 = hashlib.md5(repr(sorted(args.items())).encode('utf-8'))
         cache_tag = f'{dataset.name}-{get_feature_detector_name(detector_url)}-{md5.hexdigest()}'

@@ -88,12 +88,39 @@ class CommaSeparatedList(click.ParamType):
 @click.pass_context
 @click.option('network_pkl', '--network', help='Network pickle filename or URL', metavar='PATH', required=True)
 @click.option('--metrics', help='Comma-separated list or "none"', type=CommaSeparatedList(), default='fid50k_full', show_default=True)
-@click.option('--data', help='Dataset to evaluate metrics against (directory or zip) [default: same as training data]', metavar='PATH')
+
+@click.option('--data', help='Training data (directory or zip)', metavar='PATH')
+@click.option('--from_wsi', is_flag=True, default=False, help='Dataset from WSI? [default: false]')
+@click.option('--wsi_dir', help='WSI directory', metavar='DIR')
+@click.option('--coord_dir', help='h5 coordinate file directory', metavar='DIR')
+@click.option('--process_list', help='optional path to WSI process list csv', metavar='PATH')
+@click.option('--wsi_exten', help='WSI filename extension [default: .tif]', type=str)
+@click.option('--max_coord_per_wsi', help='Max patches from coordinate file per WSI', type=float)
+@click.option('--resolution', help='Patch resolution (depends on coord file for WSI) [default: 256]', type=int)
+@click.option('--rescale_mpp', default=None, help='Rescale the patches in dataset by micron per pixel amount? Set desired MPP (e.g. 0.25) [default: False/None]', type=float, metavar='FLOAT')
+@click.option('--desc', help='Dataset description [default: None]', type=str)
+
 @click.option('--mirror', help='Whether the dataset was augmented with x-flips during training [default: look up]', type=bool, metavar='BOOL')
 @click.option('--gpus', help='Number of GPUs to use', type=int, default=1, metavar='INT', show_default=True)
 @click.option('--verbose', help='Print optional information', type=bool, default=True, metavar='BOOL', show_default=True)
 
-def calc_metrics(ctx, network_pkl, metrics, data, mirror, gpus, verbose):
+def calc_metrics(
+    ctx, 
+    network_pkl, 
+    metrics, 
+    gpus, 
+    verbose,
+    data                = None, # Training dataset (required): <path> (unless from_wsi)
+    from_wsi            = None,
+    wsi_dir             = None,
+    coord_dir           = None,
+    process_list        = None,
+    wsi_exten           = None,
+    max_coord_per_wsi   = None,
+    resolution          = None,
+    rescale_mpp         = None,
+    desc                = None,
+    mirror              = None):
     """Calculate quality metrics for previous training run or pretrained network pickle.
 
     Examples:
@@ -146,13 +173,39 @@ def calc_metrics(ctx, network_pkl, metrics, data, mirror, gpus, verbose):
         network_dict = legacy.load_network_pkl(f)
         args.G = network_dict['G_ema'] # subclass of torch.nn.Module
 
-    # Initialize dataset options.
+
     if data is not None:
         args.dataset_kwargs = dnnlib.EasyDict(class_name='training.dataset.ImageFolderDataset', path=data)
     elif network_dict['training_set_kwargs'] is not None:
         args.dataset_kwargs = dnnlib.EasyDict(network_dict['training_set_kwargs'])
     else:
         ctx.fail('Could not look up dataset options; please specify --data')
+
+   # Initialize dataset options.
+    print('From WSI:', from_wsi)
+    args.from_wsi = from_wsi
+    # -----------------------------------
+    if from_wsi:
+        if wsi_exten is not None:
+            args.dataset_kwargs.wsi_exten = wsi_exten
+        if max_coord_per_wsi is not None:
+            args.dataset_kwargs.max_coord_per_wsi = max_coord_per_wsi
+        if rescale_mpp is not None:
+            assert isinstance(rescale_mpp, float)
+            args.dataset_kwargs.rescale_mpp = True
+            args.dataset_kwargs.desired_mpp = rescale_mpp
+        if wsi_dir is not None:
+            args.dataset_kwargs.wsi_dir = wsi_dir
+        if coord_dir is not None:
+            args.dataset_kwargs.coord_dir = coord_dir
+        if process_list is not None:
+            args.dataset_kwargs.process_list = process_list
+        if desc is not None:
+            args.dataset_kwargs.desc = desc
+
+        args.dataset_kwargs.load_mode = 'openslide'
+        args.dataset_kwargs.make_all_pipelines = False
+
 
     # Finalize dataset options.
     args.dataset_kwargs.resolution = args.G.img_resolution
